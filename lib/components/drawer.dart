@@ -1,8 +1,13 @@
 // animated_drawer.dart
+import 'package:doc_sync_1/Screens/operations/task_history.dart';
 import 'package:flutter/material.dart';
 import 'dart:math' as math; // For clamping
 // Import the new page
+import '../Screens/home_screen.dart';
+import '../Screens/masters/client_master.dart';
 import '../Screens/operations/add_new_task.dart';
+import '../Screens/operations/admin_verification.dart';
+import '../Screens/operations/task_created.dart';
 
 // Define theme colors based on the image
 const Color _drawerBackgroundColor = Color(0xFFF0F4F8); // Light grayish blue
@@ -183,9 +188,17 @@ class _AnimatedDrawerState extends State<AnimatedDrawer>
                       ),
                     ),
                     onTap: () {
-                      print('Dashboard tapped');
-                      Navigator.pop(context);
-                      // TODO: Navigate or update state
+                      Navigator.pop(context); // Close the drawer
+                      Navigator.push(
+                        // << PUSHING A NEW ROUTE
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (context) =>
+                                  const HomeScreen(), // << CREATES A NEW INSTANCE
+                        ),
+                      );
+                      print('Dashboard'); // Typo fixed
                     },
                     selected: false,
                     selectedTileColor:
@@ -263,32 +276,53 @@ class _AnimatedDrawerState extends State<AnimatedDrawer>
                         icon: Icons.playlist_add_check_circle_outlined,
                         title: 'Task Created',
                         onTap: () {
-                          Navigator.pop(context);
-                          print('Task Created');
-                        },
-                      ),
-                      _buildSubMenuItem(
-                        icon: Icons.admin_panel_settings_outlined,
-                        title: 'Admin',
-                        onTap: () {
-                          Navigator.pop(context);
-                          print('Admin');
+                          // Navigator.pop(context); // Close the drawer
+                          // Navigator.push(
+                          //   // << PUSHING A NEW ROUTE
+                          //   context,
+                          //   MaterialPageRoute(
+                          //     builder:
+                          //         (context) =>
+                          //             const TaskCreated(), // << CREATES A NEW INSTANCE
+                          //   ),
+                          // );
+                          print(
+                            'Task Created Tapped & Navigated',
+                          ); // Typo fixed
                         },
                       ),
                       _buildSubMenuItem(
                         icon: Icons.verified_user_outlined,
-                        title: 'Verification',
+                        title: 'Admin Verification',
                         onTap: () {
-                          Navigator.pop(context);
-                          print('Verification');
+                          Navigator.pop(context); // Close the drawer
+                          Navigator.push(
+                            // << PUSHING A NEW ROUTE
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (context) =>
+                                      const AdminVerification(), // << CREATES A NEW INSTANCE
+                            ),
+                          );
+                          print('Admin Verification'); // Typo fixed
                         },
                       ),
                       _buildSubMenuItem(
                         icon: Icons.history_outlined,
                         title: 'Task History',
                         onTap: () {
-                          Navigator.pop(context);
-                          print('Task History');
+                          Navigator.pop(context); // Close the drawer
+                          Navigator.push(
+                            // << PUSHING A NEW ROUTE
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (context) =>
+                                      const TaskHistoryScreen(), // << CREATES A NEW INSTANCE
+                            ),
+                          );
+                          print('Task History'); // Typo fixed
                         },
                       ),
                     ],
@@ -350,8 +384,17 @@ class _AnimatedDrawerState extends State<AnimatedDrawer>
                         icon: Icons.person_outline,
                         title: 'Client',
                         onTap: () {
-                          Navigator.pop(context);
-                          print('Client');
+                          Navigator.pop(context); // Close the drawer
+                          Navigator.push(
+                            // << PUSHING A NEW ROUTE
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (context) =>
+                                      const ClientMaster(), // << CREATES A NEW INSTANCE
+                            ),
+                          );
+                          print('Client Masters'); // Typo fixed
                         },
                       ),
                       _buildSubMenuItem(
