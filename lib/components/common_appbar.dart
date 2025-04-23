@@ -20,7 +20,7 @@ class CommonAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.onSearchPressed,
     this.onNotificationPressed,
     this.onProfilePressed,
-    required this.logoAssetPath, // <<< Changed: Now required string
+    this.logoAssetPath = 'assets/logos/logo.svg',
     this.logoHeight = 30.0, // <<< New: Default height
     this.logoColor = Colors.white, // <<< New: Default color (white)
     this.backgroundColor,

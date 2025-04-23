@@ -1,13 +1,14 @@
-// lib/screens/task_history_screen.dart (or your preferred path)
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // For date formatting
+import 'package:intl/intl.dart';
+import 'dart:math';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:data_table_2/data_table_2.dart';
 
-// Assuming these components exist in your project - replace with standard AppBar/Drawer if not
-// import '../../components/common_appbar.dart';
-// import '../../components/drawer.dart';
 import '../../components/common_appbar.dart';
 import '../../components/drawer.dart';
-import '../../modal/operations/task_history_modal.dart';
+import '../../modal/operations/task_modal.dart';
+import '../../utils/constants.dart';
 
 class TaskHistoryScreen extends StatefulWidget {
   const TaskHistoryScreen({super.key});
@@ -18,172 +19,408 @@ class TaskHistoryScreen extends StatefulWidget {
 
 class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
   final TextEditingController _dateController = TextEditingController();
-  final ScrollController _horizontalScrollController = ScrollController();
-  final ScrollController _verticalScrollController = ScrollController();
+  final TextEditingController _searchController = TextEditingController();
+  final ScrollController _pageVerticalScrollController = ScrollController();
 
-  // --- Sample Data (Replace with your actual data fetching logic) ---
-  final List<TaskHistoryItem> _taskHistoryData = [
-    TaskHistoryItem(
-      srNo: '1',
-      fileNo: 'AARJ', // File number seems short in row 1
-      client: 'client-111',
-      taskSubTask: 'GST -- GSTR 1 - Jan 25',
-      allottedBy: 'staff1',
-      allottedTo: 'admin1',
-      instructions:
-          'Task: GST Subtask: GSTR 1 - Jan 25 Period: 2022 Month From: Mar Month To: Mar',
-      period: '2022 Mar - Mar',
-      status: TaskHistoryStatus.allotted,
-      priority: TaskPriority.high,
-    ),
-    TaskHistoryItem(
-      srNo: '2',
-      fileNo: '1111',
-      client: 'client-555',
-      taskSubTask: 'GST -- GST Amendment Notice',
-      allottedBy: 'staff1',
-      allottedTo: 'staff2',
-      instructions:
-          'Task: GST Subtask: GST Amendment Notice Period: 2018-19 Month To: Mar plz do it asap Month From: Mar',
-      period: '2018-19 Mar - Mar',
-      status: TaskHistoryStatus.awaitingResponse,
-      priority: TaskPriority.high,
-    ),
-    TaskHistoryItem(
-      srNo: '3',
-      fileNo: '1111',
-      client: 'client-555',
-      taskSubTask: 'GST -- GSTR 1 - Jan 25',
-      allottedBy: 'Staff1', // Consistent casing?
-      allottedTo: 'staff11',
-      instructions: 'please do it as per guidlines',
-      period: '-', // Period is '-' in the image for this row
-      status: TaskHistoryStatus.reallotted,
-      priority: TaskPriority.high,
-    ),
-  ];
+  List<Task> _allTasks = [];
+  List<Task> _filteredTasks = [];
+  List<Task> _tasksForCurrentPage = [];
 
-  List<TaskHistoryItem> _filteredTaskHistory = [];
+  int _currentPage = 1;
+  int _totalPages = 1;
+  late int _rowsPerPage;
+  String _selectedEntriesPerPage = '10';
+  final List<String> _entriesOptions = ['10', '25', '50', '100'];
+
+  bool _isLoading = true;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    // Initially, show all data
-    _filteredTaskHistory = List.from(_taskHistoryData);
-    // Add listener or logic here if you need filtering based on date immediately
+    _rowsPerPage = int.tryParse(_selectedEntriesPerPage) ?? 10;
+    _searchController.addListener(_applyClientSideSearch);
+    _fetchTaskHistory(DateTime.now());
   }
 
   @override
   void dispose() {
+    _searchController.removeListener(_applyClientSideSearch);
     _dateController.dispose();
-    _horizontalScrollController.dispose();
-    _verticalScrollController.dispose();
+    _searchController.dispose();
+    _pageVerticalScrollController.dispose();
+
     super.dispose();
+  }
+
+  Future<void> _fetchTaskHistory(DateTime? selectedDate) async {
+    if (!mounted) return;
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      _allTasks = [];
+      _filteredTasks = [];
+      _tasksForCurrentPage = [];
+      _currentPage = 1;
+      _totalPages = 1;
+    });
+
+    final String formattedApiDate =
+        selectedDate != null
+            ? DateFormat('yyyy-MM-dd').format(selectedDate)
+            : "";
+    final String dataPayload = jsonEncode({'alloted_date': formattedApiDate});
+    final Map<String, String> formData = {'data': dataPayload};
+    final String apiUrl = '$baseUrl/get_task_details';
+    final url = Uri.parse(apiUrl);
+
+    print("--- Fetching Task History ---");
+    print("URL: $apiUrl");
+    print("Body (Form Data): $formData");
+
+    try {
+      final response = await http
+          .post(url, body: formData, headers: {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 60));
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final decodedResponse = jsonDecode(response.body);
+        print("--- Task History Response: ${response.body} ---");
+
+        if (decodedResponse is Map &&
+            decodedResponse['success'] == true &&
+            decodedResponse['data'] is List) {
+          final List<dynamic> taskData = decodedResponse['data'];
+          final List<Task> fetchedTasks =
+              taskData
+                  .map((json) {
+                    if (json is Map<String, dynamic>) {
+                      try {
+                        return Task.fromJson(json);
+                      } catch (e) {
+                        print("Error parsing Task JSON: $e\nJSON: $json");
+                        return null;
+                      }
+                    }
+                    print("Warning: Invalid item format: $json");
+                    return null;
+                  })
+                  .whereType<Task>()
+                  .toList();
+
+          if (!mounted) return;
+          setState(() {
+            _allTasks = fetchedTasks;
+            _isLoading = false;
+            _error = null;
+            _applyClientSideSearch(resetPage: true);
+          });
+          print(
+            "--- Task History Fetched Successfully (${_allTasks.length}) ---",
+          );
+        } else {
+          final message =
+              decodedResponse is Map
+                  ? (decodedResponse['message'] ??
+                      'No data found or success false')
+                  : 'Unexpected response format';
+          print("--- Task History API Info: $message ---");
+          if (!mounted) return;
+          setState(() {
+            _error =
+                message.toLowerCase().contains('no data found')
+                    ? 'No task history found.'
+                    : "API Error: $message";
+            _isLoading = false;
+            _allTasks = [];
+            _filteredTasks = [];
+            _tasksForCurrentPage = [];
+            _calculatePagination();
+          });
+        }
+      } else {
+        print(
+          "--- Task History Fetch Error (HTTP ${response.statusCode}): ${response.body} ---",
+        );
+        if (!mounted) return;
+        setState(() {
+          _error = 'Server Error: ${response.statusCode}';
+          _isLoading = false;
+          _allTasks = [];
+          _filteredTasks = [];
+          _tasksForCurrentPage = [];
+          _calculatePagination();
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      print("--- Exception fetching Task History: $e ---");
+      setState(() {
+        _error = 'Error: ${e.toString()}';
+        _isLoading = false;
+        _allTasks = [];
+        _filteredTasks = [];
+        _tasksForCurrentPage = [];
+        _calculatePagination();
+      });
+    }
+  }
+
+  void _applyClientSideSearch({bool resetPage = true}) {
+    if (!mounted) return;
+    String query = _searchController.text.toLowerCase().trim();
+    List<Task> newlyFiltered;
+    if (query.isEmpty) {
+      newlyFiltered = List.from(_allTasks);
+    } else {
+      newlyFiltered =
+          _allTasks.where((task) {
+            return (task.srNo?.toLowerCase().contains(query) ?? false) ||
+                (task.fileNo?.toLowerCase().contains(query) ?? false) ||
+                (task.client?.toLowerCase().contains(query) ?? false) ||
+                (task.taskSubTask?.toLowerCase().contains(query) ?? false) ||
+                (task.allottedBy?.toLowerCase().contains(query) ?? false) ||
+                (task.allottedTo?.toLowerCase().contains(query) ?? false) ||
+                (task.instructions?.toLowerCase().contains(query) ?? false) ||
+                (task.period?.toLowerCase().contains(query) ?? false) ||
+                (task.TaskName.toLowerCase().contains(query) ?? false) ||
+                (formatTaskDate(
+                  task.allottedDate,
+                ).toLowerCase().contains(query)) ||
+                (formatTaskDate(
+                  task.expectedEndDate,
+                ).toLowerCase().contains(query)) ||
+                (statusToString(task.status).toLowerCase().contains(query)) ||
+                (priorityToString(task.priority).toLowerCase().contains(query));
+          }).toList();
+    }
+    _filteredTasks = newlyFiltered;
+    if (resetPage) {
+      _currentPage = 1;
+    }
+    _calculatePagination();
   }
 
   Future<void> _selectDate(BuildContext context) async {
     DateTime initial = DateTime.now();
     try {
       if (_dateController.text.isNotEmpty) {
-        initial = DateFormat('dd-MM-yyyy').parse(_dateController.text);
+        initial = DateFormat('dd-MM-yyyy').parseStrict(_dateController.text);
       }
     } catch (e) {
       print("Error parsing date: $e");
-      // Handle error or keep initial date
     }
 
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: initial,
-      firstDate: DateTime(2000), // Adjust range as needed
+      firstDate: DateTime(2000),
       lastDate: DateTime(2101),
     );
-    if (picked != null) {
-      setState(() {
-        _dateController.text = DateFormat('dd-MM-yyyy').format(picked);
-        // --- Add Filtering Logic Here ---
-        // Example: Filter tasks based on the selected date if needed
-        // _filterTasksByDate(picked);
-        print("Date selected: ${_dateController.text}");
-        // For now, just updates the text field
-      });
+    if (picked != null && mounted) {
+      final String formattedDate = DateFormat('dd-MM-yyyy').format(picked);
+      if (_dateController.text != formattedDate) {
+        setState(() {
+          _dateController.text = formattedDate;
+        });
+        _fetchTaskHistory(picked);
+      }
     }
   }
 
-  void _showAllTasks() {
-    setState(() {
-      _dateController.clear();
-      _filteredTaskHistory = List.from(_taskHistoryData);
-      // Add logic to clear any other filters if you implement them
-    });
-    print("Showing all tasks");
+  void _clearFilters() {
+    bool needsRefetch = _dateController.text.isNotEmpty;
+    _dateController.clear();
+    _searchController.clear();
+    setState(() {});
+    if (needsRefetch) {
+      _fetchTaskHistory(null);
+    }
+
+    print('Filters Cleared');
   }
 
-  // --- Build Method ---
+  void _calculatePagination() {
+    if (!mounted) return;
+    _totalPages =
+        (_filteredTasks.isEmpty)
+            ? 1
+            : (_filteredTasks.length / _rowsPerPage).ceil();
+    _currentPage = max(1, min(_currentPage, _totalPages));
+    _updateCurrentPageData();
+  }
+
+  void _updateCurrentPageData() {
+    if (!mounted) return;
+    int startIndex = (_currentPage - 1) * _rowsPerPage;
+    startIndex = max(0, min(startIndex, _filteredTasks.length));
+    int endIndex = min(startIndex + _rowsPerPage, _filteredTasks.length);
+    final pageData = _filteredTasks.sublist(startIndex, endIndex);
+    if (mounted) {
+      setState(() {
+        _tasksForCurrentPage = pageData;
+      });
+    }
+    print(
+      "--- Page data updated: Page $_currentPage/$_totalPages, Rows $startIndex-$endIndex ---",
+    );
+  }
+
+  void _goToPage(int pageNumber) {
+    if (!mounted || _isLoading) return;
+    final int newPage = max(1, min(pageNumber, _totalPages));
+    if (newPage != _currentPage) {
+      setState(() {
+        _currentPage = newPage;
+      });
+      _updateCurrentPageData();
+      if (_pageVerticalScrollController.hasClients) {
+        _pageVerticalScrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+      print("--- Navigated to page: $newPage ---");
+    }
+  }
+
+  void _onEntriesPerPageChanged(String? newValue) {
+    if (newValue == null || !mounted) return;
+    int? newRowsPerPage = int.tryParse(newValue);
+    if (newRowsPerPage != null && newRowsPerPage != _rowsPerPage) {
+      setState(() {
+        _selectedEntriesPerPage = newValue;
+        _rowsPerPage = newRowsPerPage;
+        _currentPage = 1;
+      });
+      _calculatePagination();
+      print("--- Rows per page changed to: $_rowsPerPage ---");
+    }
+  }
+
+  void _showErrorSnackbar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent[700],
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'Dismiss',
+          textColor: Colors.white,
+          onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          },
+        ),
+      ),
+    );
+  }
+
+  void _onViewPressed(Task task) {
+    print("View: ${task.Taskid}");
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      // --- Use your CommonAppBar or a standard AppBar ---
       appBar: PreferredSize(
         preferredSize: const Size.fromHeight(kToolbarHeight),
         child: Builder(
-          builder: (appBarContext) {
-            return CommonAppBar(
-              logoAssetPath: 'assets/logos/logo.svg', // Your path
-              onMenuPressed: () {
-                Scaffold.of(appBarContext).openDrawer();
-              },
-              onSearchPressed: () {
-                print("Search Pressed"); /* TODO: Implement Search action */
-              },
-              onNotificationPressed: () {
-                print(
-                  "Notifications Pressed",
-                ); /* TODO: Implement Notif action */
-              },
-              onProfilePressed: () {
-                print("Profile Pressed"); /* TODO: Implement Profile action */
-              },
-            );
-          },
+          builder:
+              (appBarContext) => CommonAppBar(
+                logoAssetPath: 'assets/logos/logo.svg',
+                onMenuPressed: () => Scaffold.of(appBarContext).openDrawer(),
+                onNotificationPressed: () => print("Notifications Pressed"),
+                onProfilePressed: () => print("Profile Pressed"),
+              ),
         ),
       ),
       drawer: const AnimatedDrawer(),
-      body: SingleChildScrollView(
-        controller: _verticalScrollController,
-        padding: const EdgeInsets.all(16.0),
-        child: Container(
+      body: RefreshIndicator(
+        onRefresh:
+            () => _fetchTaskHistory(
+              _dateController.text.isEmpty
+                  ? null
+                  : DateFormat('dd-MM-yyyy').parseStrict(_dateController.text),
+            ),
+        child: Padding(
           padding: const EdgeInsets.all(16.0),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(8.0),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey.withOpacity(0.1),
-                spreadRadius: 1,
-                blurRadius: 3,
-                offset: const Offset(0, 1),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildPageHeader(),
-              const SizedBox(height: 20),
-              _buildFilterControls(), // Renamed for clarity
-              const SizedBox(height: 20),
-              _buildDataTableArea(),
-            ],
+          child: Container(
+            padding: const EdgeInsets.all(16.0),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8.0),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.1),
+                  spreadRadius: 1,
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildPageHeader(),
+                const SizedBox(height: 20),
+                _buildTopControls(),
+                const SizedBox(height: 20),
+
+                Expanded(
+                  child:
+                      _isLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : _error != null
+                          ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Text(
+                                _error!,
+                                style: const TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 16,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          )
+                          : _filteredTasks.isEmpty
+                          ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Text(
+                                _searchController.text.isNotEmpty
+                                    ? "No history matches search."
+                                    : "No task history found.",
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 16,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          )
+                          : _buildDataTableArea(),
+                ),
+
+                if (!_isLoading && _error == null && _filteredTasks.isNotEmpty)
+                  _buildPaginationControls(),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
-
-  // --- Helper Widgets ---
 
   Widget _buildPageHeader() {
     return Column(
@@ -192,7 +429,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
         Text(
           'Task History',
           style: TextStyle(
-            fontSize: 20, // Slightly smaller than Admin Verification example
+            fontSize: 20,
             fontWeight: FontWeight.bold,
             color: Theme.of(context).primaryColorDark ?? Colors.blue.shade800,
           ),
@@ -206,15 +443,56 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
     );
   }
 
-  Widget _buildFilterControls() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+  Widget _buildTopControls() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Date', style: TextStyle(fontWeight: FontWeight.w500)),
+        Row(
+          children: [
+            const Text("Show ", style: TextStyle(color: Colors.grey)),
+            SizedBox(
+              height: 40,
+              child: DropdownButton<String>(
+                value: _selectedEntriesPerPage,
+                focusColor: Colors.transparent,
+                underline: Container(height: 1, color: Colors.grey.shade400),
+                onChanged: _onEntriesPerPageChanged,
+                items:
+                    _entriesOptions.map<DropdownMenuItem<String>>((
+                      String value,
+                    ) {
+                      return DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(
+                          value,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      );
+                    }).toList(),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            ),
+            const Text(" entries", style: TextStyle(color: Colors.grey)),
+            const SizedBox(width: 16),
+          ],
+        ),
+        ElevatedButton(
+          onPressed: _clearFilters,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.green.shade700,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            minimumSize: const Size(0, 40),
+          ),
+          child: const Text('Show All'),
+        ),
+
+        const SizedBox(width: 20),
+        const Text('Date:', style: TextStyle(fontWeight: FontWeight.w500)),
         const SizedBox(width: 8),
         SizedBox(
-          width: 150, // Adjust width as needed
-          height: 40, // Control height
+          width: 150,
+          height: 40,
           child: TextField(
             controller: _dateController,
             readOnly: true,
@@ -233,169 +511,211 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             style: const TextStyle(fontSize: 14),
           ),
         ),
-        const SizedBox(width: 16),
-        ElevatedButton(
-          onPressed: _showAllTasks,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green.shade700,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-            minimumSize: const Size(0, 40), // Match TextField height
-          ),
-          child: const Text('Show All'),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            const Spacer(),
+            SizedBox(
+              width: 300,
+              height: 40,
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search history...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    vertical: 0,
+                    horizontal: 10,
+                  ),
+                  isDense: true,
+                  suffixIcon:
+                      _searchController.text.isNotEmpty
+                          ? IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () => _searchController.clear(),
+                            splashRadius: 15,
+                          )
+                          : null,
+                ),
+                style: const TextStyle(fontSize: 14),
+              ),
+            ),
+          ],
         ),
-        // Add Spacer() here if you want 'Show All' pushed to the right end
-        // const Spacer(),
       ],
     );
   }
 
   Widget _buildDataTableArea() {
-    return Scrollbar(
-      controller: _horizontalScrollController,
-      thumbVisibility: true, // Make scrollbar always visible
-      child: SingleChildScrollView(
-        controller: _horizontalScrollController,
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          dataRowMinHeight: 65.0, // Adjust min height for content
-          dataRowMaxHeight: 85.0, // Adjust max height
-          columnSpacing: 25.0, // Adjust spacing between columns
-          headingRowColor: MaterialStateProperty.all(Colors.grey.shade100),
-          border: TableBorder.all(color: Colors.grey.shade300, width: 1),
-          columns: _buildDataColumns(),
-          rows:
-              _filteredTaskHistory.map((task) => _buildDataRow(task)).toList(),
+    print(
+      "Building DataTable2 with page $_currentPage data (${_tasksForCurrentPage.length} rows)",
+    );
+
+    return DataTable2(
+      columnSpacing: 25.0,
+      horizontalMargin: 12,
+      minWidth: 1800,
+      border: TableBorder.all(color: Colors.grey.shade300, width: 1),
+      dividerThickness: 1,
+      showCheckboxColumn: false,
+      showBottomBorder: true,
+
+      headingRowHeight: 48,
+      headingRowColor: MaterialStateProperty.all(Colors.grey.shade100),
+
+      dataRowHeight: null,
+
+      columns: _buildDataColumns(),
+
+      rows:
+          _tasksForCurrentPage.asMap().entries.map((entry) {
+            int indexOnPage = entry.key;
+            Task task = entry.value;
+            int globalSrNo =
+                ((_currentPage - 1) * _rowsPerPage) + indexOnPage + 1;
+            return _buildDataRow(task, globalSrNo, indexOnPage);
+          }).toList(),
+
+      empty: Center(
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          child: const Text('No data available for this page.'),
         ),
       ),
     );
   }
 
-  List<DataColumn> _buildDataColumns() {
-    // Added const for performance where applicable
+  List<DataColumn2> _buildDataColumns() {
+    const TextStyle headerStyle = TextStyle(
+      fontWeight: FontWeight.bold,
+      fontSize: 14,
+    );
     return const [
-      DataColumn(
-        label: Text('Sr no.', style: TextStyle(fontWeight: FontWeight.bold)),
+      DataColumn2(
+        label: Text('Sr no.', style: headerStyle),
+        size: ColumnSize.S,
+        numeric: true,
       ),
-      DataColumn(
-        label: Text('File no.', style: TextStyle(fontWeight: FontWeight.bold)),
+      DataColumn2(
+        label: Text('File no.', style: headerStyle),
+        size: ColumnSize.S,
       ),
-      DataColumn(
-        label: Text('Client', style: TextStyle(fontWeight: FontWeight.bold)),
+      DataColumn2(
+        label: Text('Client', style: headerStyle),
+        size: ColumnSize.M,
       ),
-      DataColumn(
-        label: Text(
-          'Task -- Sub Task',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+      DataColumn2(
+        label: Text('Task -- Sub Task', style: headerStyle),
+        size: ColumnSize.L,
       ),
-      DataColumn(
-        label: Text(
-          'Allotted By',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+      DataColumn2(
+        label: Text('Allotted By', style: headerStyle),
+        size: ColumnSize.M,
       ),
-      DataColumn(
-        label: Text(
-          'Allotted To',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+      DataColumn2(
+        label: Text('Allotted To', style: headerStyle),
+        size: ColumnSize.M,
       ),
-      DataColumn(
-        label: Text(
-          'Instructions',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+
+      DataColumn2(
+        label: Text('Instructions', style: headerStyle),
+        size: ColumnSize.L,
       ),
-      DataColumn(
-        label: Text('Period', style: TextStyle(fontWeight: FontWeight.bold)),
+
+      DataColumn2(
+        label: Text('Period', style: headerStyle),
+        size: ColumnSize.S,
       ),
-      DataColumn(
-        label: Text('Status', style: TextStyle(fontWeight: FontWeight.bold)),
+      DataColumn2(
+        label: Text('Status', style: headerStyle),
+        size: ColumnSize.M,
       ),
-      DataColumn(
-        label: Text('Action', style: TextStyle(fontWeight: FontWeight.bold)),
+      DataColumn2(
+        label: Text('Priority', style: headerStyle),
+        size: ColumnSize.M,
+      ),
+      DataColumn2(
+        label: Text('Allotted Date', style: headerStyle),
+        size: ColumnSize.M,
+      ),
+      DataColumn2(
+        label: Text('End Date', style: headerStyle),
+        size: ColumnSize.M,
+      ),
+      DataColumn2(
+        label: Text('Action', style: headerStyle),
+        size: ColumnSize.S,
+        fixedWidth: 100,
       ),
     ];
   }
 
-  DataRow _buildDataRow(TaskHistoryItem task) {
-    return DataRow(
+  DataRow2 _buildDataRow(Task task, int globalSrNo, int indexOnPage) {
+    const String na = 'N/A';
+
+    return DataRow2(
+      color: MaterialStateProperty.resolveWith<Color?>(
+        (_) => indexOnPage.isOdd ? Colors.black.withOpacity(0.03) : null,
+      ),
       cells: [
-        DataCell(Text(task.srNo)),
-        DataCell(Text(task.fileNo)),
-        DataCell(Text(task.client)),
-        DataCell(Text(task.taskSubTask)),
-        DataCell(Text(task.allottedBy)),
-        DataCell(Text(task.allottedTo)),
+        DataCell(Text(globalSrNo.toString())),
+        DataCell(Text(task.fileNo ?? na)),
+        DataCell(Text(task.client ?? na)),
+        DataCell(Text(task.taskSubTask ?? task.TaskName)),
+        DataCell(Text(task.allottedBy ?? na)),
+        DataCell(Text(task.allottedTo ?? na)),
+
         DataCell(
-          ConstrainedBox(
-            // Limit width of instructions cell
-            constraints: const BoxConstraints(
-              maxWidth: 200,
-            ), // Adjust max width
-            child: Tooltip(
-              // Show full text on hover/long press
-              message: task.instructions,
-              child: Text(
-                task.instructions,
-                overflow: TextOverflow.ellipsis,
-                maxLines: 3, // Show multiple lines before ellipsis
-              ),
-            ),
+          Container(
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(vertical: 4.0),
+            child: Text(task.instructions ?? na, maxLines: 5),
           ),
         ),
-        DataCell(Text(task.period)),
-        DataCell(_buildStatusCell(task.status, task.priority)),
-        DataCell(
-          _buildActionCell(task),
-        ), // Pass task object if needed for actions
+        DataCell(Text(task.period ?? na)),
+        DataCell(_buildStatusChip(task.status)),
+        DataCell(_buildPriorityChip(task.priority)),
+        DataCell(Text(formatTaskDate(task.allottedDate))),
+        DataCell(Text(formatTaskDate(task.expectedEndDate))),
+        DataCell(_buildActionCell(task)),
       ],
     );
   }
 
-  Widget _buildStatusCell(TaskHistoryStatus status, TaskPriority priority) {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center, // Center chips vertically
-      crossAxisAlignment: CrossAxisAlignment.start, // Align chips left
-      children: [
-        Chip(
-          label: Text(
-            taskHistoryStatusToString(status),
-            style: const TextStyle(color: Colors.white, fontSize: 11),
-          ),
-          backgroundColor: getStatusColor(status),
-          padding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 0,
-          ), // Adjust padding
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          visualDensity: VisualDensity.compact, // Make chip smaller
-        ),
-        const SizedBox(height: 4), // Space between chips
-        Chip(
-          label: Text(
-            taskPriorityToString(priority),
-            style: const TextStyle(color: Colors.white, fontSize: 11),
-          ),
-          backgroundColor: getPriorityColor(
-            priority,
-          ), // Consistent red color for High
-          padding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 0,
-          ), // Adjust padding
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          visualDensity: VisualDensity.compact,
-        ),
-      ],
+  Widget _buildStatusChip(TaskStatus? status) {
+    if (status == null) return const Text('N/A');
+    return Chip(
+      label: Text(
+        statusToString(status),
+        style: const TextStyle(color: Colors.white, fontSize: 11),
+      ),
+      backgroundColor: statusToColor(status),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
     );
   }
 
-  Widget _buildActionCell(TaskHistoryItem task) {
-    // Example action icons based on the image
+  Widget _buildPriorityChip(TaskPriority? priority) {
+    if (priority == null) return const Text('N/A');
+    return Chip(
+      label: Text(
+        priorityToString(priority),
+        style: const TextStyle(color: Colors.white, fontSize: 11),
+      ),
+      backgroundColor: priorityToColor(priority),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Widget _buildActionCell(Task task) {
     return Row(
-      mainAxisSize: MainAxisSize.min, // Use minimum space
+      mainAxisSize: MainAxisSize.min,
       children: [
         IconButton(
           icon: Icon(
@@ -403,46 +723,77 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             color: Colors.blue.shade700,
             size: 20,
           ),
-          onPressed: () {
-            print('View action for Sr no: ${task.srNo}');
-            // Add view logic here
-          },
-          tooltip: 'View',
-          splashRadius: 18,
-          constraints: const BoxConstraints(), // Remove extra padding
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-        ),
-        IconButton(
-          icon: Icon(
-            Icons.edit_outlined,
-            color: Colors.orange.shade700,
-            size: 20,
-          ),
-          onPressed: () {
-            print('Edit action for Sr no: ${task.srNo}');
-            // Add edit logic here
-          },
-          tooltip: 'Edit',
-          splashRadius: 18,
-          constraints: const BoxConstraints(),
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-        ),
-        IconButton(
-          icon: Icon(
-            Icons.arrow_forward_outlined,
-            color: Colors.red.shade600,
-            size: 20,
-          ),
-          onPressed: () {
-            print('Forward/Reassign action for Sr no: ${task.srNo}');
-            // Add forward/reassign logic here
-          },
-          tooltip: 'Forward/Reassign', // Assuming the arrow means this
+          onPressed: () => _onViewPressed(task),
+          tooltip: 'View Details',
           splashRadius: 18,
           constraints: const BoxConstraints(),
           padding: const EdgeInsets.symmetric(horizontal: 4),
         ),
       ],
+    );
+  }
+
+  Widget _buildPaginationControls() {
+    final buttonSplashRadius = 20.0;
+    final iconColor = Colors.grey.shade700;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10.0),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            "Showing ${(_tasksForCurrentPage.isEmpty) ? 0 : (_currentPage - 1) * _rowsPerPage + 1} to ${min(_currentPage * _rowsPerPage, _filteredTasks.length)} of ${_filteredTasks.length} entries",
+            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: Icon(Icons.first_page, color: iconColor),
+                onPressed: _currentPage <= 1 ? null : () => _goToPage(1),
+                tooltip: 'First Page',
+                splashRadius: buttonSplashRadius,
+              ),
+              IconButton(
+                icon: Icon(Icons.chevron_left, color: iconColor),
+                onPressed:
+                    _currentPage <= 1
+                        ? null
+                        : () => _goToPage(_currentPage - 1),
+                tooltip: 'Previous Page',
+                splashRadius: buttonSplashRadius,
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 15.0),
+                child: Text(
+                  'Page $_currentPage of $_totalPages',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.black87),
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.chevron_right, color: iconColor),
+                onPressed:
+                    _currentPage >= _totalPages
+                        ? null
+                        : () => _goToPage(_currentPage + 1),
+                tooltip: 'Next Page',
+                splashRadius: buttonSplashRadius,
+              ),
+              IconButton(
+                icon: Icon(Icons.last_page, color: iconColor),
+                onPressed:
+                    _currentPage >= _totalPages
+                        ? null
+                        : () => _goToPage(_totalPages),
+                tooltip: 'Last Page',
+                splashRadius: buttonSplashRadius,
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,5 +1,5 @@
 class Client {
-  final String Clientid;
+  final String client_id;
   final String file_no;
   final String firm_name;
   final String contact_person;
@@ -11,7 +11,7 @@ class Client {
   final String operation;
 
   Client({
-    required this.Clientid,
+    required this.client_id,
     required this.file_no,
     required this.firm_name,
     required this.contact_person,
@@ -25,7 +25,7 @@ class Client {
 
   factory Client.fromJson(Map<String, dynamic> json) {
     return Client(
-      Clientid: json['id'] as String? ?? '',
+      client_id: json['id'] as String? ?? '',
       file_no: json['file_no'] as String? ?? '',
       firm_name: json['firm_name'] as String? ?? '',
       contact_person: json['contact_person'] as String? ?? '',
@@ -43,8 +43,8 @@ class Client {
       identical(this, other) ||
       other is Client &&
           runtimeType == other.runtimeType &&
-          Clientid == other.Clientid;
+          client_id == other.client_id;
 
   @override
-  int get hashCode => Clientid.hashCode;
+  int get hashCode => client_id.hashCode;
 }

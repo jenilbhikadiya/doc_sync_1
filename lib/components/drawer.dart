@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'dart:math' as math; // For clamping
 // Import the new page
 import '../Screens/home_screen.dart';
+// import '../Screens/masters/client_master.dart';
 import '../Screens/masters/client_master.dart';
-import '../Screens/operations/add_new_task.dart';
+import '../Screens/operations/add_new_task/add_new_task.dart';
 import '../Screens/operations/admin_verification.dart';
 import '../Screens/operations/task_created.dart';
 
@@ -276,16 +277,16 @@ class _AnimatedDrawerState extends State<AnimatedDrawer>
                         icon: Icons.playlist_add_check_circle_outlined,
                         title: 'Task Created',
                         onTap: () {
-                          // Navigator.pop(context); // Close the drawer
-                          // Navigator.push(
-                          //   // << PUSHING A NEW ROUTE
-                          //   context,
-                          //   MaterialPageRoute(
-                          //     builder:
-                          //         (context) =>
-                          //             const TaskCreated(), // << CREATES A NEW INSTANCE
-                          //   ),
-                          // );
+                          Navigator.pop(context); // Close the drawer
+                          Navigator.push(
+                            // << PUSHING A NEW ROUTE
+                            context,
+                            MaterialPageRoute(
+                              builder:
+                                  (context) =>
+                                      const TaskCreated(), // << CREATES A NEW INSTANCE
+                            ),
+                          );
                           print(
                             'Task Created Tapped & Navigated',
                           ); // Typo fixed
@@ -389,20 +390,10 @@ class _AnimatedDrawerState extends State<AnimatedDrawer>
                             // << PUSHING A NEW ROUTE
                             context,
                             MaterialPageRoute(
-                              builder:
-                                  (context) =>
-                                      const ClientMaster(), // << CREATES A NEW INSTANCE
+                              builder: (context) => const ClientMaster(),
                             ),
                           );
                           print('Client Masters'); // Typo fixed
-                        },
-                      ),
-                      _buildSubMenuItem(
-                        icon: Icons.badge_outlined,
-                        title: 'Staff',
-                        onTap: () {
-                          Navigator.pop(context);
-                          print('Staff');
                         },
                       ),
                       _buildSubMenuItem(
